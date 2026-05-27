@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Weather">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Weather</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.8s ease;
+    -webkit-user-select: none;
+    user-select: none;
+    overflow: hidden;
+  }
+
+  body.theme-clear-day { background: linear-gradient(160deg, #74b9ff 0%, #a29bfe 40%, #dfe6e9 100%); }
+  body.theme-clear-night { background: linear-gradient(160deg, #0c0c1d 0%, #1a1a3e 40%, #2d2d5e 100%); }
+  body.theme-cloudy { background: linear-gradient(160deg, #636e72 0%, #b2bec3 40%, #dfe6e9 100%); }
+  body.theme-rain { background: linear-gradient(160deg, #2d3436 0%, #636e72 40%, #74b9ff 100%); }
+  body.theme-snow { background: linear-gradient(160deg, #dfe6e9 0%, #b2bec3 40%, #636e72 100%); }
+
+  .widget {
+    width: 340px;
+    height: 340px;
+    background: rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .widget::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 50%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.12) 0%, transparent 100%);
+    pointer-events: none;
+    border-radius: 32px 32px 0 0;
+  }
+
+  .temp-morph {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    position: relative;
+    z-index: 1;
+    padding: 0 32px;
+  }
+
+  body.theme-clear-night .widget {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .hint {
+    position: fixed;
+    bottom: max(env(safe-area-inset-bottom, 20px), 20px);
+    left: 0; right: 0;
+    text-align: center;
+    color: white;
+    opacity: 0;
+    font-family: -apple-system, sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    transition: opacity 1s ease;
+    pointer-events: none;
+  }
+  .hint.show { opacity: 0.35; }
+
+  .loading-ring {
+    width: 28px; height: 28px;
+    border: 2px solid rgba(255,255,255,0.1);
+    border-top-color: rgba(255,255,255,0.6);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body class="theme-clear-day">
+  <div class="widget" id="widget">
+    <div class="loading-ring"></div>
+  </div>
+  <div class="hint" id="hint">흔들어서 온도 확인</div>
+
+<script>
+const DIGIT_SHAPES = {
+  1: [[[0,120],[72,120],[72,60],[0,60]],[[72,60],[82,120],[120,120],[120,60]],[[0,0],[0,48],[48,48],[60,0]],[[60,60],[72,60],[72,0],[60,0]]],
+  2: [[[108,66],[120,66],[120,0],[108,0]],[[0,0],[0,48],[48,48],[60,0]],[[72,72],[60,120],[120,120],[120,72]],[[0,12],[120,12],[120,0],[0,0]],[[0,120],[120,120],[120,108],[0,108]],[[0,66.4],[120,66.4],[120,54.4],[0,54.4]],[[0,120],[12,120],[12,54.4],[0,54.4]]],
+  3: [[[0,0],[0,48],[48,48],[60,0]],[[0,72],[0,120],[60,120],[48,72]],[[0,12],[120,12],[120,0],[0,0]],[[0,120],[120,120],[120,108],[0,108]],[[0,66.4],[120,66.4],[120,54.4],[0,54.4]],[[108,0],[120,0],[120,60],[108,60]],[[108,60],[120,60],[120,120],[108,120]]],
+  4: [[[0,96],[84,96],[84,84],[0,84]],[[0,0],[36,0],[36,96],[0,96]],[[48,0],[84,0],[84,84],[48,84]],[[96,48],[84,96],[120,96],[120,48]],[[48,84],[84,84],[84,120],[48,120]]],
+  5: [[[0,72],[0,120],[60,120],[48,72]],[[60,0],[72,48],[120,48],[120,0]],[[0,120],[120,120],[120,108],[0,108]],[[0,12],[120,12],[120,0],[0,0]],[[0,65.6],[120,65.6],[120,53.6],[0,53.6]],[[108,54],[120,54],[120,120],[108,120]],[[0,0],[12,0],[12,65.6],[0,65.6]]],
+  6: [[[60,0],[72,48],[120,48],[120,0]],[[0,120],[120,120],[120,108],[0,108]],[[0,12],[120,12],[120,0],[0,0]],[[0,65.6],[120,65.6],[120,53.6],[0,53.6]],[[108,54],[120,54],[120,120],[108,120]],[[0,0],[12,0],[12,65.6],[0,65.6]],[[0,53.6],[66.4,53.6],[66.4,120],[0,120]]],
+  7: [[[60,66.4],[120,66.4],[120,54.4],[60,54.4]],[[0,0],[0,48],[48,48],[60,0]],[[60,54.4],[36,120],[120,120],[120,54.4]],[[0,12],[120,12],[120,0],[0,0]],[[108,0],[120,0],[120,66],[108,66]]],
+  8: [[[0,0],[12,0],[12,60],[0,60]],[[108,60],[120,60],[120,120],[108,120]],[[0,0],[0,60],[48,60],[60,0]],[[72,60.4],[60,120],[120,120],[120,60.4]],[[0,12],[120,12],[120,0],[0,0]],[[0,120],[120,120],[120,108],[0,108]],[[0,66.4],[120,66.4],[120,54.4],[0,54.4]],[[108,0],[120,0],[120,60],[108,60]],[[0,60],[12,60],[12,120],[0,120]]],
+  9: [[[0,12],[120,12],[120,0],[0,0]],[[0,66.4],[120,66.4],[120,54.4],[0,54.4]],[[0,0],[12,0],[12,66],[0,66]],[[53.6,0],[120,0],[120,66.4],[53.6,66.4]],[[60,54.4],[36,120],[120,120],[120,54.4]]],
+  0: [[[0,12],[120,12],[120,0],[0,0]],[[0,120],[120,120],[120,108],[0,108]],[[0,0],[12,0],[12,120],[0,120]],[[48,0],[48,72],[120,36],[120,0]],[[48,84],[48,120],[120,120],[120,48]]]
+};
+
+const MAX_SHAPES = 9;
+const MORPH_DURATION = 900;
+
+function lerp(a,b,t){return a+(b-a)*t}
+function easeInOutQuart(t){return t<.5?8*t*t*t*t:1-Math.pow(-2*t+2,4)/2}
+function lerpQuad(a,b,t){return a.map((p,i)=>[lerp(p[0],b[i][0],t),lerp(p[1],b[i][1],t)])}
+function quadToD(q){return`M${q[0][0]},${q[0][1]}L${q[1][0]},${q[1][1]}L${q[2][0]},${q[2][1]}L${q[3][0]},${q[3][1]}Z`}
+function quadCenter(q){return[q.reduce((s,p)=>s+p[0],0)/4,q.reduce((s,p)=>s+p[1],0)/4]}
+function makeCollapsedQuad(cx,cy){return[[cx,cy],[cx,cy],[cx,cy],[cx,cy]]}
+
+function makeScatteredQuad(q, spread, idx, total) {
+  const [cx, cy] = quadCenter(q);
+  const goldenAngle = 2.399963;
+  const baseAngle = idx * goldenAngle;
+  const radius = spread * (0.3 + 0.7 * ((idx + 1) / total));
+  const ox = Math.cos(baseAngle) * radius + (Math.random() - 0.5) * 20;
+  const oy = Math.sin(baseAngle) * radius + (Math.random() - 0.5) * 20;
+
+  const rot = (Math.random() - 0.5) * 1.2;
+  const scale = 0.6 + Math.random() * 0.5;
+  const cosR = Math.cos(rot), sinR = Math.sin(rot);
+
+  return q.map(([px, py]) => {
+    let dx = (px - cx) * scale, dy = (py - cy) * scale;
+    return [
+      cx + ox + dx * cosR - dy * sinR,
+      cy + oy + dx * sinR + dy * cosR
+    ];
+  });
+}
+
+function padShapes(digit) {
+  const shapes = DIGIT_SHAPES[digit], padded = [...shapes];
+  while (padded.length < MAX_SHAPES) {
+    const ref = shapes[padded.length % shapes.length];
+    const [cx,cy] = quadCenter(ref);
+    padded.push(makeCollapsedQuad(cx,cy));
+  }
+  return padded;
+}
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k,v] of Object.entries(attrs)) el.setAttribute(k,v);
+  return el;
+}
+
+class MorphDigit {
+  constructor(container, size, color) {
+    this.currentShapes = null; this.animId = null;
+    this.svg = svgEl('svg', { width: size, height: size, viewBox: '0 0 120 120' });
+    container.appendChild(this.svg);
+    this.paths = [];
+    for (let i = 0; i < MAX_SHAPES; i++) {
+      const p = svgEl('path', { fill: color, 'fill-opacity': '0', d: 'M60,60L60,60L60,60L60,60Z' });
+      this.svg.appendChild(p); this.paths.push(p);
+    }
+  }
+
+  setDigit(digit, animate = true) {
+    if (this.animId) cancelAnimationFrame(this.animId);
+    const target = padShapes(digit), realCount = DIGIT_SHAPES[digit].length;
+    if (!animate || !this.currentShapes) {
+      this.currentShapes = target.map(q=>[...q.map(p=>[...p])]);
+      this.paths.forEach((p,i)=>{p.setAttribute('d',quadToD(target[i]));p.setAttribute('fill-opacity',i<realCount?'1':'0')});
+      return;
+    }
+    const start = this.currentShapes.map(q=>q.map(p=>[...p]));
+    const startOp = this.paths.map(p=>parseFloat(p.getAttribute('fill-opacity')));
+    const targetOp = target.map((_,i)=>i<realCount?1:0);
+    const t0 = performance.now();
+    const tick = (now) => {
+      const rawT = Math.min((now-t0)/MORPH_DURATION, 1), t = easeInOutQuart(rawT);
+      for (let i=0;i<MAX_SHAPES;i++){
+        const q=lerpQuad(start[i],target[i],t);
+        this.paths[i].setAttribute('d',quadToD(q));
+        this.paths[i].setAttribute('fill-opacity',String(Math.max(0,lerp(startOp[i],targetOp[i],t))));
+        this.currentShapes[i]=q;
+      }
+      if(rawT<1)this.animId=requestAnimationFrame(tick);
+    };
+    this.animId = requestAnimationFrame(tick);
+  }
+
+  scatterIn(digit, delay) {
+    const target = padShapes(digit), realCount = DIGIT_SHAPES[digit].length;
+    this.currentShapes = target.map((q,i)=>makeScatteredQuad(q, 80, i, target.length));
+    this.paths.forEach((p,j)=>{p.setAttribute('d',quadToD(this.currentShapes[j]));p.setAttribute('fill-opacity',j<realCount?'1':'0')});
+    setTimeout(()=>this.setDigit(digit, true), delay);
+  }
+
+  scatter(digit) {
+    if (this.animId) cancelAnimationFrame(this.animId);
+    const target = padShapes(digit);
+    const realCount = DIGIT_SHAPES[digit].length;
+    const scattered = target.map((q,i)=>makeScatteredQuad(q, 80, i, target.length));
+    const start = this.currentShapes ? this.currentShapes.map(q=>q.map(p=>[...p])) : scattered.map(q=>q.map(p=>[...p]));
+    const t0 = performance.now();
+    const tick = (now) => {
+      const rawT = Math.min((now-t0)/MORPH_DURATION, 1), t = easeInOutQuart(rawT);
+      for (let i=0;i<MAX_SHAPES;i++){
+        const q=lerpQuad(start[i],scattered[i],t);
+        this.paths[i].setAttribute('d',quadToD(q));
+        this.currentShapes[i]=q;
+      }
+      if(rawT<1)this.animId=requestAnimationFrame(tick);
+    };
+    this.animId = requestAnimationFrame(tick);
+  }
+
+  setScattered(digit) {
+    const target = padShapes(digit), realCount = DIGIT_SHAPES[digit].length;
+    this.currentShapes = target.map((q,i)=>makeScatteredQuad(q, 80, i, target.length));
+    this.paths.forEach((p,j)=>{p.setAttribute('d',quadToD(this.currentShapes[j]));p.setAttribute('fill-opacity',j<realCount?'1':'0')});
+  }
+}
+
+const WEATHER = {
+  0:{theme:'clear'},1:{theme:'clear'},2:{theme:'cloudy'},3:{theme:'cloudy'},
+  45:{theme:'cloudy'},48:{theme:'cloudy'},51:{theme:'rain'},53:{theme:'rain'},
+  55:{theme:'rain'},61:{theme:'rain'},63:{theme:'rain'},65:{theme:'rain'},
+  71:{theme:'snow'},73:{theme:'snow'},75:{theme:'snow'},77:{theme:'snow'},
+  80:{theme:'rain'},81:{theme:'rain'},82:{theme:'rain'},95:{theme:'rain'},
+  96:{theme:'rain'},99:{theme:'rain'}
+};
+
+function isNight(h){return h<6||h>=19}
+
+async function getLocation() {
+  return new Promise(resolve => {
+    if (!navigator.geolocation) { resolve({lat:37.5665,lon:126.978}); return; }
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({lat:p.coords.latitude,lon:p.coords.longitude}),
+      () => resolve({lat:37.5665,lon:126.978}),
+      {timeout:5000}
+    );
+  });
+}
+
+async function getWeather(lat, lon) {
+  const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=auto`);
+  return r.json();
+}
+
+let morphDigits = [];
+let morphDigitValues = [];
+let minusRect = null;
+let degreeCircle = null;
+let assembled = false;
+let disassembleTimer = null;
+
+function assemble() {
+  if (assembled) return;
+  assembled = true;
+  if (disassembleTimer) clearTimeout(disassembleTimer);
+  document.getElementById('hint').classList.remove('show');
+  morphDigits.forEach((md, i) => md.setDigit(morphDigitValues[i], true));
+  if (minusRect) {
+    minusRect.style.transition = `fill-opacity ${MORPH_DURATION}ms ease`;
+    minusRect.setAttribute('fill-opacity', '0.9');
+  }
+  if (degreeCircle) {
+    degreeCircle.style.transition = `opacity ${MORPH_DURATION}ms ease`;
+    degreeCircle.setAttribute('opacity', '0.9');
+  }
+  disassembleTimer = setTimeout(disassemble, 4000);
+}
+
+function disassemble() {
+  if (!assembled) return;
+  assembled = false;
+  morphDigits.forEach((md, i) => md.scatter(morphDigitValues[i]));
+  if (minusRect) {
+    minusRect.style.transition = `fill-opacity ${MORPH_DURATION}ms ease`;
+    minusRect.setAttribute('fill-opacity', '0');
+  }
+  if (degreeCircle) {
+    degreeCircle.style.transition = `opacity ${MORPH_DURATION}ms ease`;
+    degreeCircle.setAttribute('opacity', '0');
+  }
+}
+
+// Shake detection
+let shakeThreshold = 20;
+let lastShake = 0;
+let lastAcc = { x: 0, y: 0, z: 0 };
+
+function onMotion(e) {
+  const acc = e.accelerationIncludingGravity;
+  if (!acc) return;
+  const dx = Math.abs(acc.x - lastAcc.x);
+  const dy = Math.abs(acc.y - lastAcc.y);
+  const dz = Math.abs(acc.z - lastAcc.z);
+  lastAcc = { x: acc.x, y: acc.y, z: acc.z };
+  if (dx + dy + dz > shakeThreshold) {
+    const now = Date.now();
+    if (now - lastShake < 1200) return;
+    lastShake = now;
+    assemble();
+  }
+}
+
+function onClick() { assemble(); }
+
+async function init() {
+  try {
+    const loc = await getLocation();
+    const weather = await getWeather(loc.lat, loc.lon);
+    const temp = Math.round(weather.current.temperature_2m);
+    const code = weather.current.weather_code;
+    const night = isNight(new Date().getHours());
+    const theme = (WEATHER[code]||WEATHER[0]).theme;
+    document.body.className = `theme-${night?'clear-night':theme==='clear'?'clear-day':theme}`;
+
+    const widget = document.getElementById('widget');
+    widget.innerHTML = '';
+    const container = document.createElement('div');
+    container.className = 'temp-morph';
+    widget.appendChild(container);
+
+    const tempStr = String(temp);
+    const digitSize = 140;
+
+    morphDigits = [];
+    morphDigitValues = [];
+    minusRect = null;
+    degreeCircle = null;
+
+    for (let i = 0; i < tempStr.length; i++) {
+      const ch = tempStr[i];
+      if (ch === '-') {
+        const minus = svgEl('svg', { width: String(digitSize*0.4), height: String(digitSize), viewBox: '0 0 50 120' });
+        const rect = svgEl('rect', { x:'5', y:'52', width:'40', height:'14', rx:'2', fill:'white', 'fill-opacity':'0' });
+        minus.appendChild(rect);
+        container.appendChild(minus);
+        minusRect = rect;
+      } else {
+        const d = parseInt(ch);
+        if (isNaN(d)) continue;
+        const md = new MorphDigit(container, digitSize, 'white');
+        md.setScattered(d);
+        morphDigits.push(md);
+        morphDigitValues.push(d);
+      }
+    }
+
+    const deg = svgEl('svg', { width: String(digitSize*0.32), height: String(digitSize), viewBox: '0 0 40 120' });
+    const circle = svgEl('circle', { cx:'20', cy:'18', r:'14', fill:'none', stroke:'white', 'stroke-width':'5', opacity:'0' });
+    deg.appendChild(circle);
+    container.appendChild(deg);
+    degreeCircle = circle;
+
+    // Show hint
+    setTimeout(() => document.getElementById('hint').classList.add('show'), 1500);
+
+    // Motion permissions (iOS 13+)
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      widget.addEventListener('click', async function reqPerm() {
+        try {
+          const perm = await DeviceMotionEvent.requestPermission();
+          if (perm === 'granted') window.addEventListener('devicemotion', onMotion);
+        } catch {}
+        widget.removeEventListener('click', reqPerm);
+        onClick();
+      }, { once: true });
+    } else {
+      if (typeof DeviceMotionEvent !== 'undefined') window.addEventListener('devicemotion', onMotion);
+      widget.addEventListener('click', onClick);
+    }
+
+  } catch (e) {
+    document.getElementById('widget').innerHTML = `<span style="color:white;opacity:0.5;font-size:13px">불러올 수 없습니다</span>`;
+  }
+}
+
+init();
+</script>
+</body>
+</html>
